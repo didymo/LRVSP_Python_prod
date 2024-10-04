@@ -15,9 +15,8 @@ import processPDF as pdf
 import processXML as xml
 from config import DRUPAL_PATH, LOG_PATH, DB_CONFIG
 
-CYCLE_TIME = 120
-PARSE_LIMIT = 10
-CREATE_LIMIT = 1200
+from constants import CYCLE_TIME, PARSE_LIMIT, CREATE_LIMIT
+
 
 # supported file types:
 # dictionary with following format:
@@ -28,34 +27,16 @@ FILE_TYPES: dict[str, function] = {
     "xml": xml.process
 }
 
-TRANSACTION_LEVEL_QUERY = '''
-    SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED
-'''
-GET_PATHS_QUERY = '''SELECT ID, pdfPath, processPath, entityId
-                     FROM FilePaths
-                     WHERE failed = 0 LIMIT %s'''
-UPDATE_PATH_QUERY = '''UPDATE FilePaths
-                       SET failed = 1
-                       WHERE ID = %s'''
-DROP_PATH_QUERY = '''DELETE FROM FilePaths WHERE ID = %s'''
-MAKE_DOC_QUERY = '''INSERT INTO DocObjs (title, metadata, entityId, numLinks)
-                    VALUES (%s, %s, %s, %s)'''
-MAKE_LINK_QUERY = '''INSERT INTO LinkObjs (fromTitle, toTitle, pages)
-                     VALUES (%s, %s, %s)'''
-CHECK_REMAINING_QUERY = '''SELECT SUM(rowCount) FROM (
-                           SELECT COUNT(*) AS rowCount
-                               FROM FilePaths WHERE failed = 0
-                           UNION ALL
-                           SELECT COUNT(*) AS rowCount
-                               FROM DocObjs WHERE failed = 0
-                           UNION ALL
-                           SELECT COUNT(*) AS rowCount
-                               FROM LinkObjs WHERE failed = 0)
-                           AS tmp'''
+from queries import (TRANSACTION_LEVEL_QUERY, GET_PATHS_QUERY,
+                     UPDATE_PATH_QUERY, DROP_PATH_QUERY,
+                     MAKE_DOC_QUERY, MAKE_LINK_QUERY,
+                     CHECK_REMAINING_QUERY)
 
 
 def timeNow():
     return time.ctime(time.time())
+
+
 
 
 logger = logging.getLogger("LRVSP_Python")
@@ -70,8 +51,7 @@ def main():
     try:
         while True:
             startTime = timer()
-            msg = "\t{}\t| Start processing"
-            logger.info(msg.format(timeNow()))
+            logger.info(f"\\t{timeNow()}\\t| Start processing")
             # open database connection
             cnx = mysql.connector.connect(**DB_CONFIG)
             cursor = cnx.cursor()
@@ -195,29 +175,28 @@ def main():
             # Ensure DRUPAL_PATH is absolute and correctly joined with the path to 'drush'
             drush_path = os.path.join(os.path.abspath(DRUPAL_PATH), 'vendor', 'bin', 'drush')
 
-            result = subprocess.run([drush_path, "lrvsCheck-db", str(CREATE_LIMIT)],
-                                    stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT)
+            try:
+                result = subprocess.run([drush_path, "lrvsCheck-db", str(CREATE_LIMIT)],
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT,
+                                        check=True)  # 'check=True' raises CalledProcessError for non-zero exit code
 
-            if result.returncode == 0:
                 res = result.stdout
-                # decode into str if bytes returned
                 if isinstance(res, bytes):
                     res = res.decode()
-                logger.info(f"\t{timeNow()}\t| {res}")
-            else:
-                res = result.stdout
-                # decode into str if bytes returned
-                if isinstance(res, bytes):
-                    res = res.decode()
-                msg = "\t{}\t| Drush failed with error code {} {}"
-                logger.error(msg.format(timeNow(), result.returncode, res))
+                logger.info(f"\\t{timeNow()}\\t| Drush command succeeded with output length {len(res)}")
+
+            except subprocess.CalledProcessError as e:
+                logger.error(f"\\t{timeNow()}\\t| Drush failed with error code {result.returncode}")
+
+
+            except Exception as e:
+                logger.error(f"\\t{timeNow()}\\t| Unhandled exception in subprocess: {str(e)}")
 
             # determine how long this took
             endTime = timer()
             timeTaken = endTime - startTime
-            msg = "\t{}\t| End processing. Time taken {} seconds"
-            logger.info(msg.format(timeNow(), timeTaken))
+            logger.info(f"\\t{timeNow()}\\t| End processing. Time taken {timeTaken} seconds")
 
             # check if there's still stuff to process,
             # if there is immediately re-run
