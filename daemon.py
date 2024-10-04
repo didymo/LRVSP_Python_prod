@@ -1,3 +1,4 @@
+import os
 import sys
 
 import mysql.connector
@@ -79,6 +80,7 @@ def main():
 
             # get filepaths to process
             cursor.execute(GET_PATHS_QUERY, (PARSE_LIMIT,))
+
             # extract all results in cursor iterator, free it for use elsewhere
             results = [res for res in cursor]
             # commit a select statement??????
@@ -190,11 +192,13 @@ def main():
                     cnx.commit()
 
             # tell drupal to start processing
-            result = subprocess.run([f"{DRUPAL_PATH}/vendor/bin/drush",
-                                     "lrvsCheck-db",
-                                     str(CREATE_LIMIT)],
+            # Ensure DRUPAL_PATH is absolute and correctly joined with the path to 'drush'
+            drush_path = os.path.join(os.path.abspath(DRUPAL_PATH), 'vendor', 'bin', 'drush')
+
+            result = subprocess.run([drush_path, "lrvsCheck-db", str(CREATE_LIMIT)],
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT)
+
             if result.returncode == 0:
                 res = result.stdout
                 # decode into str if bytes returned
@@ -224,8 +228,16 @@ def main():
                 time.sleep(CYCLE_TIME - min(CYCLE_TIME, timeTaken))
 
     except KeyboardInterrupt:
-        msg = "\t{}\t| Received keyboard interrupt, closing daemon"
-        logger.info(msg.format(timeNow()))
+        logger.info(f"\t{timeNow()}\t| Received keyboard interrupt, closing daemon")
+        return 0
+    except Exception as e:
+        logger.error(f"\t{timeNow()}\t| Unhandled exception: {str(e)}")
+        return 1
+    finally:
+        if 'cnx' in locals() and cnx.is_connected():
+            cnx.close()
+
+    return 0
 
 
 if __name__ == "__main__":
